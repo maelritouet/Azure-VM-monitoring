@@ -1,62 +1,80 @@
 # Azure-VM-monitoring
-This project demonstrates how to monitor a Linux VM on Azure and set up custom alerts for security-related events.
 
 ## Overview
+-This project demonstrates how to monitor a hardened Linux VM on Azure and create custom alerts for suspicious activity. The main focus was on detecting repeated failed SSH login attempts and triggering email notifications via Azure Monitor.
 
-- Connected a Linux VM to a Log Analytics Workspace.
-- Collected Syslog (auth, syslog, kern) and performance metrics (CPU, RAM, Disk, Network).
-- Created custom KQL queries to detect failed SSH login attempts (brute force) and track successful logins.
-- Configured Azure Alerts to notify via email when thresholds are exceeded.
+<img width="1536" height="1024" alt="ChatGPT Image Sep 10, 2025, 05_14_30 PM" src="https://github.com/user-attachments/assets/f0e8b087-f9dc-428d-ac05-d91649d525ab" />
 
-## Architecture
-[VM] --> [Azure Monitor Agent] --> [Log Analytics Workspace] --> [Alerts/Action Group]
+## Step-by-Step Implementation
+### 1. Connect VM to Log Analytics Workspace
 
+Created a Log Analytics Workspace in the same region as the VM (uksouth).
 
+Linked the VM to the workspace through the Insights blade in the Azure Portal.
 
-## Setup Steps
+### 2. Enable Syslog Collection
 
-1. **Connect VM to Log Analytics Workspace**
-   - Create a workspace in the same region as your VM.
-   - Enable guest-level diagnostics and Syslog collection.
+Enabled guest-level diagnostics on the VM.
 
-2. **Verify Logs**
-   - SSH into your VM and generate test logs (failed/successful logins).
-   - Use the Logs blade in Azure to run KQL queries.
+Configured collection of auth and syslog logs so that login events are sent to the workspace.
 
-3. **Custom Queries**
-   - **Failed SSH by IP (alert)**:
-     ```kusto
-     Syslog
-     | where TimeGenerated > ago(5m)
-     | where SyslogMessage contains "Failed password"
-     | extend src = extract(@"from (\d+\.\d+\.\d+\.\d+)", 1, SyslogMessage)
-     | where isnotempty(src)
-     | summarize Attempts = count() by Computer, src
-     | where Attempts > 5
-     | project ResourceId = strcat("/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Compute/virtualMachines/", Computer), Computer, src, Attempts
-     ```
-   - **Successful SSH logins** (optional):
-     ```kusto
-     Syslog
-     | where TimeGenerated > ago(15m)
-     | where SyslogMessage contains "Accepted"
-     | project TimeGenerated, Computer, SyslogMessage
-     | sort by TimeGenerated desc
-     ```
+### 3. Verify Logs in the Workspace
 
-4. **Create Alerts**
-   - Scope: Log Analytics Workspace
-   - Signal: Custom log search
-   - Period: 5 minutes, Frequency: 1 minute
-   - Logic: Trigger when query returns results > 0
-   - Actions: Send email via Action Group
+Opened the workspace → Logs.
 
-5. **Test Alerts**
-   - Generate failed SSH attempts to trigger alerts.
-   - Verify email notifications.
+Confirmed ingestion of syslog data with a simple query:
 
-## Documentation
-All screenshots are stored in the `doc/` folder.
+Syslog
+| where TimeGenerated > ago(1h)
+| sort by TimeGenerated desc
+| take 20
+
+### 4. Create a Custom KQL Query for Failed SSH Attempts
+
+Built a query to detect multiple failed SSH logins from the same IP within 5 minutes:
+
+```
+Syslog
+| where TimeGenerated > ago(5m)
+| where SyslogMessage contains "Failed password"
+| extend src = extract(@"(\d{1,3}(\.\d{1,3}){3})", 1, SyslogMessage)
+| where isnotempty(src)
+| summarize Attempts = count() by Computer, src
+| where Attempts > 5
+| project ResourceId = strcat("/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.Compute/virtualMachines/", Computer), Computer, src, Attempts
+```
+
+Added a ResourceId projection to allow the alert to tie results directly to the VM.
+
+### 5. Configure an Alert Rule
+
+Scope: Log Analytics Workspace.
+
+Condition: The failed SSH query above.
+
+Evaluation: 5-minute window, evaluated every 1 minute.
+
+Action: Created an Action Group to send email notifications.
+
+### 6. Test the Alert
+
+Generated syslog events simulating repeated failed SSH logins.
+
+Verified that:
+
+The query detected the events.
+
+The alert fired as expected.
+
+Email notifications were received.
+
+## Results
+
+VM activity is now continuously monitored through Azure Monitor.
+
+Suspicious SSH login attempts trigger real-time email alerts, improving incident response.
+
+Demonstrates practical use of Azure Monitor + Log Analytics + KQL for security monitoring.
 
 ## Skills & Technologies
 - Azure Monitor & Log Analytics
